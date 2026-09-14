@@ -1,0 +1,107 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "deep-research-agent",
+  "main": "./src/server/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // --- Requirement: user input via chat UI (static SPA served by the Worker) ---
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Without this, `not_found_handling: single-page-application` would serve
+    // index.html for /agents/* and the WebSocket upgrade would never reach the
+    // Worker. These prefixes must hit the Worker first.
+    "run_worker_first": ["/agents/*", "/api/*"]
+  },
+
+  // --- Requirement: LLM. Llama 3.3 70B runs on Workers AI. ---
+  // There is no local emulation of Workers AI: even under `wrangler dev` this
+  // binding is a real call to Cloudflare's network, which is why local dev needs
+  // `wrangler login`. See the `demo` environment below to run fully offline.
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+
+  // --- Requirement: memory / state. One Durable Object per session, with SQLite. ---
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ResearchAgent",
+        "class_name": "ResearchAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ResearchAgent"]
+    }
+  ],
+
+  // --- Requirement: workflow / coordination. Durable multi-step research runs. ---
+  "workflows": [
+    {
+      "name": "research-workflow",
+      "binding": "RESEARCH_WORKFLOW",
+      "class_name": "ResearchWorkflow"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  },
+
+  "vars": {
+    "DEMO_MODE": "false",
+    // Max sub-questions the planner may produce per research run.
+    "MAX_SUBQUESTIONS": "5",
+    // Max pages fetched and read per sub-question.
+    "MAX_PAGES_PER_SUBQUESTION": "3"
+  },
+
+  // Optional secrets (add with `wrangler secret put <NAME>`, or a `.dev.vars`
+  // file locally). Without them the agent falls back to keyless search:
+  //   BRAVE_SEARCH_API_KEY  - https://api-dashboard.search.brave.com/
+  //   TAVILY_API_KEY        - https://tavily.com/
+
+  "env": {
+    // `wrangler dev --env demo` runs the entire app offline with canned model
+    // and search output: no Cloudflare account, no login, no network. Useful for
+    // working on the UI. Bindings are not inherited by named environments, so
+    // everything is repeated here deliberately.
+    "demo": {
+      "assets": {
+        "directory": "./dist/client",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/agents/*", "/api/*"]
+      },
+      // No `ai` binding at all: DEMO_MODE never calls Workers AI, and omitting
+      // the binding is what keeps `wrangler dev` from opening a remote proxy
+      // session (which would require credentials and defeat the purpose).
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "ResearchAgent",
+            "class_name": "ResearchAgent"
+          }
+        ]
+      },
+      "workflows": [
+        {
+          "name": "research-workflow-demo",
+          "binding": "RESEARCH_WORKFLOW",
+          "class_name": "ResearchWorkflow"
+        }
+      ],
+      "vars": {
+        "DEMO_MODE": "true",
+        "MAX_SUBQUESTIONS": "3",
+        "MAX_PAGES_PER_SUBQUESTION": "2"
+      }
+    }
+  }
+}

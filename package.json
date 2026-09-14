@@ -1,0 +1,34 @@
+{
+  "name": "deep-research-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A durable, cited deep-research agent on Cloudflare: Workers AI (Llama 3.3) + Workflows + Durable Objects + semantic memory.",
+  "scripts": {
+    "dev": "concurrently -n worker,client -c cyan,magenta \"npm:dev:worker\" \"npm:dev:client\"",
+    "dev:worker": "wrangler dev --port 8787",
+    "dev:client": "vite",
+    "dev:demo": "concurrently -n worker,client -c yellow,magenta \"npm:dev:worker:demo\" \"npm:dev:client\"",
+    "dev:worker:demo": "wrangler dev --env demo --port 8787",
+    "build": "tsc --noEmit && vite build",
+    "preview": "npm run build && wrangler dev --port 8787",
+    "deploy": "vite build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "agents": "^0.23.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "concurrently": "^9.2.4",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0",
+    "wrangler": "^4.131.0"
+  }
+}
