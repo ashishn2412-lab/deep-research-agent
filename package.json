@@ -5,9 +5,12 @@
   "type": "module",
   "description": "A durable, cited deep-research agent on Cloudflare: Workers AI (Llama 3.3) + Workflows + Durable Objects + semantic memory.",
   "scripts": {
+    "//dev": "wrangler needs assets.directory to exist before it will boot, so both dev scripts build the client once first. HMR still comes from the Vite server on :5173.",
+    "predev": "vite build",
     "dev": "concurrently -n worker,client -c cyan,magenta \"npm:dev:worker\" \"npm:dev:client\"",
     "dev:worker": "wrangler dev --port 8787",
     "dev:client": "vite",
+    "predev:demo": "vite build",
     "dev:demo": "concurrently -n worker,client -c yellow,magenta \"npm:dev:worker:demo\" \"npm:dev:client\"",
     "dev:worker:demo": "wrangler dev --env demo --port 8787",
     "build": "tsc --noEmit && vite build",
