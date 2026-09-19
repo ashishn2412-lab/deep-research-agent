@@ -14,11 +14,16 @@
 interface Env {
   BRAVE_SEARCH_API_KEY?: string;
   TAVILY_API_KEY?: string;
+  /** Set both to reach Workers AI over REST instead of the `AI` binding. */
+  CF_ACCOUNT_ID?: string;
+  CF_AI_API_TOKEN?: string;
 }
 
 declare namespace Cloudflare {
   interface Env {
     BRAVE_SEARCH_API_KEY?: string;
     TAVILY_API_KEY?: string;
+    CF_ACCOUNT_ID?: string;
+    CF_AI_API_TOKEN?: string;
   }
 }

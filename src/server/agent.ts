@@ -15,7 +15,7 @@
 
 import { Agent, callable, type Connection, type WSMessage } from "agents";
 
-import { chatStream, chatJSON } from "./ai";
+import { chatStream, chatJSON, modelUnavailableReason } from "./ai";
 import {
   chatPrompt,
   rememberPrompt,
@@ -131,6 +131,15 @@ export class ResearchAgent extends Agent<Env, ResearchState> {
     }
 
     this.appendMessage({ role: "user", content: clean, kind: "chat" });
+
+    // Fail fast on misconfiguration rather than letting it surface as a Workflow
+    // step failure several retries later.
+    const unavailable = modelUnavailableReason(this.env);
+    if (unavailable) {
+      this.patch({ phase: "error", error: unavailable, question: clean });
+      this.log(unavailable);
+      return;
+    }
 
     // Memory is recalled once per turn and reused by both paths.
     let memories: MemoryItem[] = [];

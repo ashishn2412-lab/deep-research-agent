@@ -94,13 +94,43 @@ npm run dev:demo      # → http://localhost:5173
 Everything real still runs: Durable Objects, SQLite, Workflows, checkpointing,
 state sync, streaming. Only the model and search responses are fixtures.
 
-### For real, with Llama 3.3
+### For real, with Llama 3.3 — via the AI binding
 
 ```bash
 npx wrangler login
-npm run build         # the Worker serves dist/client
 npm run dev           # → http://localhost:5173
 ```
+
+This requires your Cloudflare account to have a **workers.dev subdomain**
+registered (free, and it does not require buying a domain — Cloudflare dashboard
+→ *Workers & Pages* → **Change** next to *Your subdomain*). Workers AI has no
+local emulation, so under `wrangler dev` the `AI` binding opens a remote session,
+and that session needs the subdomain. Without it wrangler exits with:
+
+```
+✘ You need to register a workers.dev subdomain before running the dev command in remote mode.
+```
+
+### For real, with Llama 3.3 — via the REST API (no subdomain needed)
+
+If you can't or don't want to register a subdomain, this path talks to
+`api.cloudflare.com` directly and needs no `AI` binding at all:
+
+1. Dashboard → **Workers AI** → *Use REST API* → **Create a Workers AI API Token**
+   (permissions: `Workers AI - Read` and `Workers AI - Edit`). Copy the token and
+   your Account ID.
+2. Create `.dev.vars`:
+   ```
+   CF_ACCOUNT_ID=your_account_id
+   CF_AI_API_TOKEN=your_token
+   ```
+3. Run:
+   ```bash
+   npm run dev:rest     # → http://localhost:5173
+   ```
+
+Same real model, same everything else. When both are configured REST wins, since
+it is only ever set deliberately. On deploy the binding is always used.
 
 Search works with no keys (DuckDuckGo Lite, falling back to the Wikipedia API),
 but result quality is much better with a key. Optional — create `.dev.vars`:

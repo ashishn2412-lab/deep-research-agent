@@ -17,19 +17,131 @@ export const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 export type Msg = { role: "system" | "user" | "assistant"; content: string };
 
 /**
- * The `demo` wrangler environment deliberately has no `ai` binding, so the
- * generated type makes `env.AI` optional. Everything below goes through here so
- * a misconfiguration produces one clear message instead of
- * "cannot read property 'run' of undefined".
+ * Workers AI can be reached two ways, and this project supports both.
+ *
+ *  - **binding** (`env.AI`): the normal path, and the only one that works when
+ *    deployed. Under `wrangler dev` the binding runs in *remote* mode, which
+ *    requires the account to have a workers.dev subdomain registered.
+ *  - **REST** (`CF_ACCOUNT_ID` + `CF_AI_API_TOKEN`): plain HTTPS to
+ *    api.cloudflare.com. Needs no binding and no subdomain, so it unblocks local
+ *    development on an account that has not been through Workers onboarding.
+ *
+ * REST wins when both are configured, because it is only ever set deliberately.
  */
-function ai(env: Env): Ai {
-  if (!env.AI) {
+type Provider =
+  | { kind: "rest"; accountId: string; token: string }
+  | { kind: "binding"; ai: Ai };
+
+function provider(env: Env): Provider {
+  if (env.CF_ACCOUNT_ID && env.CF_AI_API_TOKEN) {
+    return {
+      kind: "rest",
+      accountId: env.CF_ACCOUNT_ID,
+      token: env.CF_AI_API_TOKEN,
+    };
+  }
+  if (env.AI) return { kind: "binding", ai: env.AI };
+
+  throw new Error(
+    "No way to reach Workers AI. Pick one: (a) `npm run dev` with a workers.dev " +
+      "subdomain registered, (b) `npm run dev:rest` with CF_ACCOUNT_ID and " +
+      "CF_AI_API_TOKEN in .dev.vars, or (c) `npm run dev:demo` for offline fixtures.",
+  );
+}
+
+/**
+ * Preflight: is a model reachable at all? Returns the reason if not.
+ *
+ * Without this the agent starts a Workflow that fails inside its first step,
+ * and Workflows retries with backoff before giving up — so the UI would sit on a
+ * spinner for a long time before showing a misconfiguration the server already
+ * knew about at turn zero.
+ */
+export function modelUnavailableReason(env: Env): string | null {
+  if (isDemoMode(env)) return null;
+  try {
+    provider(env);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+function restUrl(accountId: string, model: string): string {
+  return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
+}
+
+/** Run a model and return its parsed result, via whichever provider is configured. */
+async function runModel<T>(
+  env: Env,
+  model: string,
+  inputs: Record<string, unknown>,
+): Promise<T> {
+  const target = provider(env);
+
+  if (target.kind === "binding") {
+    return (await target.ai.run(
+      model as Parameters<Ai["run"]>[0],
+      inputs as Parameters<Ai["run"]>[1],
+    )) as T;
+  }
+
+  const res = await fetch(restUrl(target.accountId, model), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${target.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(inputs),
+  });
+
+  if (!res.ok) {
     throw new Error(
-      "No Workers AI binding. Either run the default environment (`npm run dev`, " +
-        "after `wrangler login`) or use DEMO_MODE (`npm run dev:demo`).",
+      `Workers AI REST ${res.status}: ${(await res.text()).slice(0, 300)}`,
     );
   }
-  return env.AI;
+
+  const body = (await res.json()) as {
+    success: boolean;
+    result?: T;
+    errors?: unknown[];
+  };
+  if (!body.success) {
+    throw new Error(`Workers AI REST error: ${JSON.stringify(body.errors)}`);
+  }
+  return body.result as T;
+}
+
+/** Same as `runModel`, but returns the raw SSE byte stream. */
+async function runModelStream(
+  env: Env,
+  model: string,
+  inputs: Record<string, unknown>,
+): Promise<ReadableStream<Uint8Array>> {
+  const target = provider(env);
+
+  if (target.kind === "binding") {
+    return (await target.ai.run(
+      model as Parameters<Ai["run"]>[0],
+      { ...inputs, stream: true } as Parameters<Ai["run"]>[1],
+    )) as unknown as ReadableStream<Uint8Array>;
+  }
+
+  const res = await fetch(restUrl(target.accountId, model), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${target.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...inputs, stream: true }),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(
+      `Workers AI REST stream ${res.status}: ${(await res.text()).slice(0, 300)}`,
+    );
+  }
+  return res.body;
 }
 
 type ChatOptions = {
@@ -45,11 +157,11 @@ export async function chat(
 ): Promise<string> {
   if (isDemoMode(env)) return demoChat(messages);
 
-  const res = (await ai(env).run(CHAT_MODEL, {
+  const res = await runModel<{ response?: string }>(env, CHAT_MODEL, {
     messages,
     max_tokens: opts.maxTokens ?? 1024,
     temperature: opts.temperature ?? 0.4,
-  })) as { response?: string };
+  });
 
   return (res.response ?? "").trim();
 }
@@ -71,12 +183,11 @@ export async function* chatStream(
     return;
   }
 
-  const stream = (await ai(env).run(CHAT_MODEL, {
+  const stream = await runModelStream(env, CHAT_MODEL, {
     messages,
-    stream: true,
     max_tokens: opts.maxTokens ?? 1024,
     temperature: opts.temperature ?? 0.4,
-  })) as unknown as ReadableStream<Uint8Array>;
+  });
 
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -120,12 +231,16 @@ export async function chatJSON<T>(
 ): Promise<T> {
   if (isDemoMode(env)) return demoJSON<T>(messages);
 
-  const res = (await ai(env).run(CHAT_MODEL, {
-    messages,
-    max_tokens: opts.maxTokens ?? 1024,
-    temperature: opts.temperature ?? 0.2,
-    response_format: { type: "json_schema", json_schema: schema },
-  })) as { response?: string | Record<string, unknown> };
+  const res = await runModel<{ response?: string | Record<string, unknown> }>(
+    env,
+    CHAT_MODEL,
+    {
+      messages,
+      max_tokens: opts.maxTokens ?? 1024,
+      temperature: opts.temperature ?? 0.2,
+      response_format: { type: "json_schema", json_schema: schema },
+    },
+  );
 
   const raw = res.response;
   if (raw && typeof raw === "object") return raw as T;
@@ -164,9 +279,9 @@ export async function embed(env: Env, texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   if (isDemoMode(env)) return texts.map(demoEmbedding);
 
-  const res = (await ai(env).run(EMBED_MODEL, { text: texts })) as {
-    data?: number[][];
-  };
+  const res = await runModel<{ data?: number[][] }>(env, EMBED_MODEL, {
+    text: texts,
+  });
   const vectors = res.data ?? [];
   if (vectors.length !== texts.length) {
     throw new Error(

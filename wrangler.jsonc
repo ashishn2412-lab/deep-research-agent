@@ -68,6 +68,40 @@
   //   TAVILY_API_KEY        - https://tavily.com/
 
   "env": {
+    // `wrangler dev --env rest` runs REAL Llama 3.3, but reaches Workers AI over
+    // its REST API instead of the `AI` binding. Omitting the binding is the whole
+    // point: the binding forces `wrangler dev` into a remote session, which
+    // requires a registered workers.dev subdomain. This path needs neither.
+    // Put CF_ACCOUNT_ID and CF_AI_API_TOKEN in `.dev.vars` first.
+    "rest": {
+      "assets": {
+        "directory": "./dist/client",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/agents/*", "/api/*"]
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "ResearchAgent",
+            "class_name": "ResearchAgent"
+          }
+        ]
+      },
+      "workflows": [
+        {
+          "name": "research-workflow-rest",
+          "binding": "RESEARCH_WORKFLOW",
+          "class_name": "ResearchWorkflow"
+        }
+      ],
+      "vars": {
+        "DEMO_MODE": "false",
+        "MAX_SUBQUESTIONS": "5",
+        "MAX_PAGES_PER_SUBQUESTION": "3"
+      }
+    },
+
     // `wrangler dev --env demo` runs the entire app offline with canned model
     // and search output: no Cloudflare account, no login, no network. Useful for
     // working on the UI. Bindings are not inherited by named environments, so
