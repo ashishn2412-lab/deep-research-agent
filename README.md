@@ -73,13 +73,55 @@ over.
 Because the UI is a pure function of server state, refreshing the page mid-run
 shows the run exactly where it was.
 
-## Running it
+## Quick start
 
 Requires Node 20+.
 
 ```bash
+git clone https://github.com/ashishn2412-lab/deep-research-agent.git
+cd deep-research-agent
 npm install
+npm run dev:demo          # → open the URL Vite prints (usually http://localhost:5173)
 ```
+
+That runs with no Cloudflare account at all. To use the real model, pick a row:
+
+| Command | Model | What you need first |
+|---|---|---|
+| `npm run dev:demo` | canned fixtures | nothing |
+| `npm run dev:rest` | **real Llama 3.3** | Account ID + Workers AI API token in `.dev.vars` — [steps below](#option-b--real-llama-33-over-the-rest-api-no-subdomain-needed) |
+| `npm run dev` | **real Llama 3.3** | `wrangler login` **and** a registered workers.dev subdomain |
+
+> Open the URL Vite prints, not `:8787`. Vite serves the UI and proxies
+> `/agents/*` (including the WebSocket) to the Worker. If port 5173 is taken it
+> will pick 5174 — that's fine, the proxy target is what matters.
+
+## Working on this repo across machines
+
+This project gets edited from more than one laptop. **Always pull before you
+start**, otherwise you will diverge and have to merge:
+
+```bash
+git pull --ff-only          # fails loudly instead of creating a surprise merge
+```
+
+If that refuses because both sides have commits, rebase your local work on top:
+
+```bash
+git pull --rebase
+```
+
+Then work, and push when done:
+
+```bash
+git add -A && git commit -m "..." && git push
+```
+
+`.dev.vars`, `node_modules/`, `dist/` and `.wrangler/` are gitignored, so secrets
+and build output never travel with the repo. That also means **each machine needs
+its own `.dev.vars`** — cloning does not bring your API token with it.
+
+## Running it
 
 ### Offline, no Cloudflare account
 
@@ -94,50 +136,110 @@ npm run dev:demo      # → http://localhost:5173
 Everything real still runs: Durable Objects, SQLite, Workflows, checkpointing,
 state sync, streaming. Only the model and search responses are fixtures.
 
-### For real, with Llama 3.3 — via the AI binding
+There are two ways to reach the real model. Both run the identical pipeline —
+they differ only in how the Worker talks to Workers AI.
+
+### Option A — real Llama 3.3 via the AI binding
 
 ```bash
 npx wrangler login
-npm run dev           # → http://localhost:5173
+npm run dev
 ```
 
-This requires your Cloudflare account to have a **workers.dev subdomain**
-registered (free, and it does not require buying a domain — Cloudflare dashboard
-→ *Workers & Pages* → **Change** next to *Your subdomain*). Workers AI has no
-local emulation, so under `wrangler dev` the `AI` binding opens a remote session,
-and that session needs the subdomain. Without it wrangler exits with:
+This needs your account to have a **workers.dev subdomain** registered. Workers AI
+has no local emulation, so under `wrangler dev` the `AI` binding opens a *remote*
+session against Cloudflare, and that session requires the subdomain. Without it
+wrangler exits before serving anything:
 
 ```
 ✘ You need to register a workers.dev subdomain before running the dev command in remote mode.
 ```
 
-### For real, with Llama 3.3 — via the REST API (no subdomain needed)
+**A workers.dev subdomain is free and does not require buying a domain.** It is
+just a name like `yourname.workers.dev`. Register it here:
 
-If you can't or don't want to register a subdomain, this path talks to
-`api.cloudflare.com` directly and needs no `AI` binding at all:
+> Cloudflare dashboard → **Workers & Pages** → **Change** next to *Your subdomain*
+> → pick any available name → Save.
 
-1. Dashboard → **Workers AI** → *Use REST API* → **Create a Workers AI API Token**
-   (permissions: `Workers AI - Read` and `Workers AI - Edit`). Copy the token and
-   your Account ID.
-2. Create `.dev.vars`:
-   ```
-   CF_ACCOUNT_ID=your_account_id
-   CF_AI_API_TOKEN=your_token
-   ```
-3. Run:
-   ```bash
-   npm run dev:rest     # → http://localhost:5173
-   ```
+Do **not** use the `/workers/onboarding` link wrangler prints — that funnel tries
+to sell you a custom domain through Cloudflare Registrar, which is a different
+(paid) product and is not needed. If you only see a domain-purchase flow, you are
+on the wrong page; go to *Workers & Pages* directly.
 
-Same real model, same everything else. When both are configured REST wins, since
-it is only ever set deliberately. On deploy the binding is always used.
+### Option B — real Llama 3.3 over the REST API (no subdomain needed)
 
-Search works with no keys (DuckDuckGo Lite, falling back to the Wikipedia API),
-but result quality is much better with a key. Optional — create `.dev.vars`:
+This path calls `api.cloudflare.com` directly and uses **no `AI` binding at all**,
+so wrangler never opens the remote session that requires a subdomain. Use it if
+subdomain registration is blocked or you would rather not bother.
+
+**1. Get your Account ID.**
+
+Dashboard → **Workers & Pages**. The **Account ID** is in the right-hand sidebar
+(a 32-character hex string). Copy it.
+
+Or from the CLI:
+
+```bash
+npx wrangler whoami
+```
+
+**2. Create a Workers AI API token.**
+
+The quickest route is the prebuilt template:
+
+> Dashboard → **AI** → **Workers AI** → **Use REST API** →
+> **Create a Workers AI API Token** → **Create API Token**
+
+Copy the token immediately — Cloudflare shows it exactly once.
+
+If you build one by hand instead (*My Profile → API Tokens → Create Token →
+Create Custom Token*), it needs both of these permissions:
+
+| Type | Resource | Access |
+|---|---|---|
+| Account | Workers AI | **Read** |
+| Account | Workers AI | **Edit** |
+
+**3. Put both in `.dev.vars`** in the project root (this file is gitignored, so
+the token is never committed):
 
 ```
-BRAVE_SEARCH_API_KEY=...
-TAVILY_API_KEY=...
+CF_ACCOUNT_ID=your_32_char_account_id
+CF_AI_API_TOKEN=your_token
+```
+
+**4. Verify the credentials before starting the app** — this isolates a bad token
+from an app bug:
+
+```bash
+curl https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast \
+  -H "Authorization: Bearer $CF_AI_API_TOKEN" \
+  -d '{"messages":[{"role":"user","content":"Reply with the single word: ok"}]}'
+```
+
+Expect `{"result":{"response":"ok"...},"success":true,...}`. A `10000`
+authentication error means the token is wrong or lacks the Workers AI
+permissions; a `7003` error means the Account ID is wrong.
+
+**5. Run it:**
+
+```bash
+npm run dev:rest
+```
+
+When both a binding and REST credentials are available, REST wins — it is only
+ever set deliberately. **Deployed Workers always use the binding**, so this is a
+local-development convenience, not a production path.
+
+### Optional: better search results
+
+Search works with no keys (DuckDuckGo Lite, falling back to the Wikipedia API),
+but quality improves a lot with a real search API. Add either to the same
+`.dev.vars`:
+
+```
+BRAVE_SEARCH_API_KEY=...    # free tier: https://api-dashboard.search.brave.com/
+TAVILY_API_KEY=...          # https://tavily.com/
 ```
 
 ### Deploy
@@ -150,7 +252,54 @@ npx wrangler secret put BRAVE_SEARCH_API_KEY   # optional
 Note: Workflows and Durable Objects with SQLite storage require a paid Workers
 plan. The demo environment does not.
 
-## What Is verified
+## Troubleshooting
+
+### `You need to register a workers.dev subdomain before running the dev command in remote mode`
+
+The `AI` binding needs a remote session and your account has no workers.dev
+subdomain. Either register one (free — see [Option A](#option-a--real-llama-33-via-the-ai-binding))
+or switch to [Option B](#option-b--real-llama-33-over-the-rest-api-no-subdomain-needed)
+and run `npm run dev:rest`.
+
+Do **not** press `l` for local mode as wrangler suggests. Local mode drops the AI
+binding entirely, and the app will tell you so:
+`No way to reach Workers AI. Pick one: ...`
+
+### `[vite] ws proxy error: connect ECONNREFUSED 127.0.0.1:8787`
+
+A symptom, not the cause — the Worker process failed to start, so Vite has nothing
+to proxy to. Scroll up in the output and fix the first `✘ [ERROR]` from the
+`[worker]` side.
+
+### `The directory specified by the "assets.directory" field ... does not exist`
+
+The client has not been built. `npm run dev` and `npm run dev:demo` build it
+automatically via a `predev` step, so this only appears if you run
+`wrangler dev` directly. Fix with `npm run build`.
+
+### `Port 5173 is in use, trying another one...`
+
+Harmless. Vite moves to 5174 and the proxy target is unchanged. Open the URL it
+prints. To reclaim 5173: `lsof -ti:5173 | xargs kill`.
+
+### The UI shows a `DEMO MODE` badge
+
+You are running `npm run dev:demo`. Model and search responses are fixtures. Use
+`npm run dev:rest` or `npm run dev` for real output.
+
+### `npm install` fails with a 401 / auth error
+
+Your global npm is pointed at a private registry with an expired token. This repo
+ships a project-local `.npmrc` pinning the public registry, which normally fixes
+it. If it persists, check `npm config get registry` resolves to
+`https://registry.npmjs.org/` inside this directory.
+
+### Research finishes but finds few or no sources
+
+Keyless DuckDuckGo scraping gets rate-limited from datacentre IPs, leaving only
+the Wikipedia fallback. Add a `BRAVE_SEARCH_API_KEY` to `.dev.vars`.
+
+## What is verified
 
 Not "it compiles" — these were run against a live `wrangler dev`:
 
