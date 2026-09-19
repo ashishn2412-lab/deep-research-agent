@@ -150,7 +150,7 @@ npx wrangler secret put BRAVE_SEARCH_API_KEY   # optional
 Note: Workflows and Durable Objects with SQLite storage require a paid Workers
 plan. The demo environment does not.
 
-## What I verified
+## What Is verified
 
 Not "it compiles" — these were run against a live `wrangler dev`:
 
